@@ -1,0 +1,428 @@
+#!/data/data/com.termux/files/usr/bin/bash
+#
+# termux-best-mirror: A modern, ultra-fast tool to find and set
+# the fastest repository mirror for Termux.
+#
+
+# Ensure we are running in Termux
+if [ -z "$TERMUX_PREFIX" ] || [ ! -d "$TERMUX_PREFIX/etc/termux/mirrors" ]; then
+	TERMUX_PREFIX="/data/data/com.termux/files/usr"
+	if [ ! -d "$TERMUX_PREFIX/etc/termux/mirrors" ]; then
+		echo -e "\033[1;31m✖ Error: This script must be run inside Termux.\033[0m"
+		echo -e "Could not locate mirrors directory at: \033[36m$TERMUX_PREFIX/etc/termux/mirrors\033[0m"
+		exit 1
+	fi
+fi
+
+# Load Termux package manager setup
+if [ -f "$TERMUX_PREFIX/bin/termux-setup-package-manager" ]; then
+	# shellcheck source=/dev/null
+	source "$TERMUX_PREFIX/bin/termux-setup-package-manager"
+fi
+
+# Set up secure temp directory
+TMP_BASE="${TMPDIR:-$TERMUX_PREFIX/tmp}"
+mkdir -p "$TMP_BASE"
+TEMP_DIR="$(mktemp -d "$TMP_BASE/termux_bench.XXXXXX")"
+SPEED_RESULT_FILE="$TEMP_DIR/mirror_speeds.txt"
+
+# Helper functions for cursor and terminal manipulation
+hide_cursor() {
+	tput civis 2>/dev/null || echo -ne "\033[?25l"
+}
+
+show_cursor() {
+	tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+}
+
+get_term_height() {
+	tput lines 2>/dev/null || echo 24
+}
+
+get_term_width() {
+	tput cols 2>/dev/null || echo 80
+}
+
+cleanup() {
+	show_cursor
+	echo -ne "\033[?7h"
+	rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
+
+handle_interrupt() {
+	show_cursor
+	echo -ne "\033[?7h"
+	rm -rf "$TEMP_DIR"
+	echo -e "\n\033[1;31m✖ Process interrupted. Exiting...\033[0m"
+	exit 1
+}
+trap handle_interrupt INT TERM
+
+# Ensure dependencies are met
+check_dependencies() {
+	local missing=()
+	for pkg in curl awk; do
+		if ! command -v "$pkg" >/dev/null 2>&1; then
+			missing+=("$pkg")
+		fi
+	done
+
+	if [ ${#missing[@]} -gt 0 ]; then
+		echo -e "\033[33m⌛ Installing required dependencies: ${missing[*]}...\033[0m"
+		pkg install -y "${missing[@]}"
+	fi
+}
+
+# Link selected mirror path
+unlink_and_link() {
+	local mirror_path="$1"
+	if [ -L "$TERMUX_PREFIX/etc/termux/chosen_mirrors" ]; then
+		unlink "$TERMUX_PREFIX/etc/termux/chosen_mirrors"
+	fi
+	ln -s "${mirror_path}" "$TERMUX_PREFIX/etc/termux/chosen_mirrors"
+}
+
+# Extract mirror description
+get_mirror_description() {
+	head -n 2 "$1" | tail -n 1 | cut -d" " -f2-
+}
+
+# Format latency & description with modern colors natively
+format_speed_desc() {
+	local speed="$1"
+	local desc="$2"
+	local ESC=$'\033'
+	
+	if [ "$speed" = "999.999" ]; then
+		printf "%s[31m❌ Connection Failed%s[0m\n" "$ESC" "$ESC"
+	else
+		local speed_color
+		if awk -v s="$speed" 'BEGIN {exit !(s < 0.2)}'; then
+			speed_color="${ESC}[1;32m" # Green
+		elif awk -v s="$speed" 'BEGIN {exit !(s < 0.5)}'; then
+			speed_color="${ESC}[1;33m" # Yellow
+		else
+			speed_color="${ESC}[1;31m" # Red
+		fi
+		printf "%s⚡ %ss%s %s[90m- %s%s[0m\n" "$speed_color" "$speed" "$ESC" "$ESC" "$desc" "$ESC"
+	fi
+}
+
+# Hardcoded regions with validation
+get_region_description() {
+	case "$1" in
+		"asia") echo "Asia (excl. Chinese Mainland & Russia)" ;;
+		"chinese_mainland") echo "Chinese Mainland mirrors" ;;
+		"europe") echo "European mirrors" ;;
+		"north_america") echo "North American mirrors" ;;
+		"oceania") echo "Oceanian mirrors" ;;
+		"russia") echo "Russian mirrors" ;;
+		*) echo "Mirrors in this region" ;;
+	esac
+}
+
+# Interactive arrow-key selection menu (pure Bash)
+select_option() {
+	local title="$1"
+	local default_idx="$2"
+	shift 2
+	local items=()
+	local descs=()
+	while [ "$#" -gt 0 ]; do
+		items+=("$1")
+		descs+=("$2")
+		shift 2
+	done
+
+	local num_items=${#items[@]}
+	local current=$default_idx
+	
+	hide_cursor
+	# Disable line wrapping so text safely runs off the right edge instead of breaking layout
+	echo -ne "\033[?7l"
+	
+	local scroll_offset=0
+	local prev_lines_printed=0
+
+	while true; do
+		# Dynamically check terminal size on every loop iteration
+		local term_height
+		term_height=$(get_term_height)
+		local max_visible=10
+		if [ "$max_visible" -gt "$((term_height - 5))" ]; then
+			max_visible=$((term_height - 5))
+			[ "$max_visible" -lt 3 ] && max_visible=3
+		fi
+
+		if [ "$max_visible" -gt "$num_items" ]; then
+			max_visible=$num_items
+		fi
+
+		if [ "$current" -lt "$scroll_offset" ]; then
+			scroll_offset=$current
+		elif [ "$current" -ge "$((scroll_offset + max_visible))" ]; then
+			scroll_offset=$((current - max_visible + 1))
+		fi
+
+		if [ "$prev_lines_printed" -gt 0 ]; then
+			echo -ne "\033[${prev_lines_printed}A"
+		fi
+
+		echo -e "\033[1;36m$title\033[0m\033[K"
+		echo -e "\033[90mNavigate with ↑/↓ keys, press Enter to select\033[0m\033[K"
+		
+		for ((i=0; i<max_visible; i++)); do
+			local idx=$((scroll_offset + i))
+			if [ "$idx" -lt "$num_items" ]; then
+				local prefix="  "
+				local name="${items[idx]}"
+				local desc="${descs[idx]}"
+				if [ "$idx" -eq "$current" ]; then
+					prefix="\033[1;36m❯ \033[0m"
+					printf "${prefix}\033[1;36m%-30s\033[0m  %s\033[K\n" "$name" "$desc"
+				else
+					printf "${prefix}%-30s  %s\033[K\n" "$name" "$desc"
+				fi
+			else
+				echo -e "\033[K"
+			fi
+		done
+
+		if [ "$((scroll_offset + max_visible))" -lt "$num_items" ]; then
+			printf "\033[90m  ... and %d more (scroll down) ...\033[0m\033[K\n" "$((num_items - scroll_offset - max_visible))"
+		else
+			echo -ne "\033[K\n"
+		fi
+		
+		local current_lines_printed=$((max_visible + 3))
+		if [ "$prev_lines_printed" -gt "$current_lines_printed" ]; then
+			local extra_lines=$((prev_lines_printed - current_lines_printed))
+			for ((i=0; i<extra_lines; i++)); do
+				echo -e "\033[K"
+			done
+			echo -ne "\033[${extra_lines}A"
+		fi
+		prev_lines_printed=$current_lines_printed
+
+		local key
+		IFS= read -rsn1 -t 0.5 key
+		local exit_code=$?
+		
+		# If read timed out, loop again to allow dynamic resizing
+		if [ "$exit_code" -gt 128 ]; then
+			continue
+		fi
+
+		if [ "$key" = $'\x1b' ]; then
+			read -rsn2 -t 0.1 key
+			if [ "$key" = "[A" ]; then
+				current=$(( (current - 1 + num_items) % num_items ))
+			elif [ "$key" = "[B" ]; then
+				current=$(( (current + 1) % num_items ))
+			fi
+		elif [ -z "$key" ]; then
+			break
+		fi
+	done
+
+	for ((i=0; i<prev_lines_printed; i++)); do
+		echo -ne "\033[1A\033[K"
+	done
+	
+	# Re-enable line wrapping
+	echo -ne "\033[?7h"
+	show_cursor
+
+	selected_index=$current
+}
+
+# The core benchmark function (runs concurrently in background)
+test_mirror_speed_async() {
+	local mirror_file="$1"
+	local mirror_name
+	mirror_name=$(basename "$mirror_file")
+	local mirror_url
+	mirror_url=$(grep "MAIN=" "$mirror_file" | cut -d'"' -f2)
+
+	# Ensure URL ends with slash
+	[[ "$mirror_url" != */ ]] && mirror_url="${mirror_url}/"
+
+	# Release file is a lightweight and standard verification file
+	local test_url="${mirror_url}dists/stable/Release"
+
+	local curl_out
+	curl_out=$(curl -s -L --connect-timeout 4 --max-time 8 \
+		-w "%{http_code}|%{time_total}" \
+		-o /dev/null "$test_url" 2>/dev/null)
+	
+	local http_code
+	local time_total
+	IFS='|' read -r http_code time_total <<< "$curl_out"
+
+	if [ "$http_code" = "200" ] && [ -n "$time_total" ]; then
+		local formatted_time
+		formatted_time=$(awk -v t="$time_total" 'BEGIN {printf "%.3f", t}')
+		local safe_name="${mirror_file//\//_}"
+		echo "$mirror_file|$mirror_name|$formatted_time" > "$TEMP_DIR/${safe_name}.result"
+	else
+		local safe_name="${mirror_file//\//_}"
+		echo "$mirror_file|$mirror_name|999.999" > "$TEMP_DIR/${safe_name}.result"
+	fi
+}
+
+select_mirrors_to_test() {
+	local MIRROR_BASE_DIR="$TERMUX_PREFIX/etc/termux/mirrors"
+	
+	local known_keys=("all" "asia" "chinese_mainland" "europe" "north_america" "oceania" "russia")
+	local known_names=("All mirrors" "Asia" "Chinese Mainland" "Europe" "North America" "Oceania" "Russia")
+	
+	local region_folders=()
+	local menu_options=()
+	
+	for ((i=0; i<${#known_keys[@]}; i++)); do
+		local key="${known_keys[i]}"
+		if [ "$key" = "all" ] || [ -d "$MIRROR_BASE_DIR/$key" ]; then
+			region_folders+=("$key")
+			menu_options+=("${known_names[i]}" "$(get_region_description "$key")")
+		fi
+	done
+	
+	if [ ${#region_folders[@]} -le 1 ]; then
+		echo -e "\033[31m✖ Error: No mirror folders found in $MIRROR_BASE_DIR.\033[0m"
+		exit 1
+	fi
+	
+	select_option "Select Mirror Region to Test" 0 "${menu_options[@]}"
+	local selected_folder="${region_folders[$selected_index]}"
+	local selected_name="${menu_options[$((selected_index * 2))]}"
+	
+	echo -e "\033[32m✔\033[0m Region: \033[1;36m$selected_name\033[0m"
+	
+	return_mirrors=()
+	if [ "$selected_folder" = "all" ]; then
+		mapfile -t return_mirrors < <(find "${MIRROR_BASE_DIR}" -type f ! -name "*\.dpkg-old" ! -name "*\.dpkg-new" ! -name "*~" 2>/dev/null)
+	else
+		mapfile -t return_mirrors < <(find "${MIRROR_BASE_DIR}/${selected_folder}/" -type f ! -name "*\.dpkg-old" ! -name "*\.dpkg-new" ! -name "*~" 2>/dev/null)
+	fi
+	
+	if [ ${#return_mirrors[@]} -eq 0 ]; then
+		echo -e "\033[31m✖ Error: No mirrors found in the selected region.\033[0m"
+		exit 1
+	fi
+	
+	mirrors=("${return_mirrors[@]}")
+}
+
+test_selected_mirrors() {
+	select_mirrors_to_test
+
+	echo -e "\n\033[36m🚀 Firing concurrent requests to ${#mirrors[@]} mirrors...\033[0m"
+
+	# Launch all curl requests in background
+	for mirror in "${mirrors[@]}"; do
+		test_mirror_speed_async "$mirror" &
+	done
+
+	# Live progress bar loop
+	local total_mirrors=${#mirrors[@]}
+	local completed=0
+	
+	hide_cursor
+	while [ "$completed" -lt "$total_mirrors" ]; do
+		completed=$(find "$TEMP_DIR" -name "*.result" | wc -l)
+		
+		local percent=$(( completed * 100 / total_mirrors ))
+		local filled=$(( percent / 5 ))
+		local unfilled=$(( 20 - filled ))
+		
+		local bar=""
+		for ((i=0; i<filled; i++)); do bar="${bar}█"; done
+		for ((i=0; i<unfilled; i++)); do bar="${bar}░"; done
+		
+		printf "\r\033[36m⚡\033[0m Testing: \033[1;32m[%s]\033[0m \033[1;36m%d%%\033[0m (%d/%d)" "$bar" "$percent" "$completed" "$total_mirrors"
+		sleep 0.1
+	done
+	wait
+	show_cursor
+	
+	# Aggregate individual result files and sort them numerically by latency (3rd field)
+	cat "$TEMP_DIR"/*.result | sort -t'|' -k3 -n > "$SPEED_RESULT_FILE" 2>/dev/null
+	echo -e "\n\033[32m✔ Speed testing completed!\033[0m\n"
+}
+
+select_mirror_by_speed() {
+	local MIRRORS=()
+	local path_list=()
+	local name_list=()
+	
+	local count=0
+	while IFS='|' read -r mirror_path mirror_name speed; do
+		path_list+=("$mirror_path")
+		name_list+=("$mirror_name")
+		
+		local raw_desc
+		raw_desc=$(get_mirror_description "$mirror_path")
+		local mirror_desc
+		mirror_desc=$(format_speed_desc "$speed" "$raw_desc")
+		
+		MIRRORS+=("$mirror_name" "$mirror_desc")
+		((count++))
+	done < "$SPEED_RESULT_FILE"
+	
+	if [ "$count" -eq 0 ]; then
+		echo -e "\033[31m✖ Error: No mirrors were tested. Exiting.\033[0m"
+		exit 1
+	fi
+	
+	select_option "Select Your Preferred Mirror" 0 "${MIRRORS[@]}"
+	
+	local selected_mirror="${name_list[$selected_index]}"
+	local selected_path="${path_list[$selected_index]}"
+	
+	echo -e "\033[32m✔\033[0m Selected: \033[1;36m$selected_mirror\033[0m"
+	
+	if [ -n "$selected_path" ]; then
+		echo -e "\033[36m⌛ Updating chosen_mirrors symbolic link...\033[0m"
+		unlink_and_link "$selected_path"
+		
+		echo -e "\033[36m⌛ Verifying configuration and updating Termux package indexes...\033[0m"
+		TERMUX_APP_PACKAGE_MANAGER=apt pkg --check-mirror update
+		
+		echo -e "\n\033[1;32m🎉 Success! Repository mirror has been updated successfully.\033[0m"
+	else
+		echo -e "\033[31m✖ Error: Could not resolve the path for the selected mirror.\033[0m"
+		exit 1
+	fi
+}
+
+show_banner() {
+	echo -e "\033[1;36m"
+	echo -e "  ┌──────────────────────────────────────────┐"
+	echo -e "  │      ⚡  TERMUX BEST MIRROR v1    ⚡      │"
+	echo -e "  │   Find the fastest repo for your device  │"
+	echo -e "  └──────────────────────────────────────────┘"
+	echo -e "\033[0m"
+}
+
+main() {
+	show_banner
+	check_dependencies
+
+	if ! command -v apt 1>/dev/null 2>&1; then
+		echo -e "\033[31m✖ Error: Cannot change mirrors since apt is not installed.\033[0m" >&2
+		exit 1
+	fi
+
+	if [ "$TERMUX_APP_PACKAGE_MANAGER" = "pacman" ]; then
+		echo -e "\033[33m⚠ Warning: This script only changes mirrors for apt.\033[0m"
+		read -r -p "Do you want to continue? [y/N]: " -n 1
+		echo
+		[[ ! ${REPLY} =~ ^[Yy]$ ]] && exit 0
+	fi
+
+	test_selected_mirrors
+	select_mirror_by_speed
+}
+
+main

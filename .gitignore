@@ -1,0 +1,6 @@
+# System Files
+.DS_Store
+*~
+*.swp
+*.tmp
+*.log
