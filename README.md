@@ -14,13 +14,15 @@ Built exclusively for Termux, this tool features highly concurrent speed-tests, 
 
 ## Installation 🚀
 
-To install `termux-best-mirror` globally onto your device so you can run it from anywhere:
+You can easily install this tool globally onto your device with a single command:
 
 ```bash
-# Make the install script executable
-chmod +x install.sh
+bash <(curl -sL https://raw.githubusercontent.com/rugved-danej/termux-best-mirror/main/install.sh)
+```
 
-# Run the installer
+**Alternatively, to install manually from a local clone:**
+```bash
+chmod +x install.sh
 ./install.sh
 ```
 

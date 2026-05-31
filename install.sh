@@ -12,19 +12,21 @@ fi
 
 SCRIPT_NAME="termux-best-mirror"
 DESTINATION="$TERMUX_PREFIX/bin/$SCRIPT_NAME"
+RAW_URL="https://raw.githubusercontent.com/rugved-danej/termux-best-mirror/main/termux-best-mirror"
 
 echo -e "\033[36m⌛ Installing $SCRIPT_NAME to $DESTINATION...\033[0m"
 
-if [ ! -f "$SCRIPT_NAME" ]; then
-	echo -e "\033[1;31m✖ Error: Could not find the file '$SCRIPT_NAME' in the current directory.\033[0m"
-	exit 1
+if [ -f "$SCRIPT_NAME" ]; then
+	# Copy local file if repository is cloned
+	cp "$SCRIPT_NAME" "$DESTINATION"
+else
+	# Download directly from GitHub if run via curl memory pipe
+	echo -e "\033[36m⌛ Downloading latest version from GitHub...\033[0m"
+	if ! curl -sL "$RAW_URL" -o "$DESTINATION"; then
+		echo -e "\033[1;31m✖ Error: Failed to download the script. Check your internet connection.\033[0m"
+		exit 1
+	fi
 fi
-
-# Ensure the script is executable
-chmod +x "$SCRIPT_NAME"
-
-# Copy the script to the Termux bin directory
-cp "$SCRIPT_NAME" "$DESTINATION"
 
 # Make sure the installed version is executable
 chmod +x "$DESTINATION"
