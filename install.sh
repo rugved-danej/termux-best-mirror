@@ -35,7 +35,7 @@ if [ -f "cmd/termux-best-mirror/main.go" ] && command -v go >/dev/null 2>&1; the
 	fi
 else
 	echo -e "\033[36m[*] Downloading pre-compiled binary for $GOARCH...\033[0m"
-	DOWNLOAD_URL="https://github.com/rugved-danej/termux-best-mirror/releases/latest/download/termux-best-mirror-linux-$GOARCH"
+	DOWNLOAD_URL="https://github.com/rugved-danej/termux-best-mirror/releases/latest/download/termux-best-mirror-android-$GOARCH"
 	
 	if ! curl -sL --fail "$DOWNLOAD_URL" -o "$DESTINATION"; then
 		echo -e "\033[1;31m[!] Error: Failed to download the binary. Please ensure there is a release available for your architecture or install Go to build it locally.\033[0m"
