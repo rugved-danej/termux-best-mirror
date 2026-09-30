@@ -1,4 +1,9 @@
-# termux-best-mirror ⚡
+# termux-best-mirror
+
+[![GitHub Release](https://img.shields.io/github/v/release/rugved-danej/termux-best-mirror?style=flat-square&color=blueviolet)](https://github.com/rugved-danej/termux-best-mirror/releases)
+[![License](https://img.shields.io/github/license/rugved-danej/termux-best-mirror?style=flat-square&color=success)](LICENSE)
+[![Issues](https://img.shields.io/github/issues/rugved-danej/termux-best-mirror?style=flat-square&color=critical)](https://github.com/rugved-danej/termux-best-mirror/issues)
+[![Stars](https://img.shields.io/github/stars/rugved-danej/termux-best-mirror?style=flat-square&color=yellow)](https://github.com/rugved-danej/termux-best-mirror/stargazers)
 
 ![termux-best-mirror preview](preview.gif)
 
@@ -6,27 +11,22 @@ A modern, ultra-fast, and responsive tool to automatically find and set the fast
 
 Built exclusively for Termux, this tool features highly concurrent speed-tests, an interactive terminal UI with seamless resize responsiveness, and real-time color-coded latency tracking.
 
-## Features ✨
-- **Ultra-Fast Benchmarking**: Tests all Termux mirrors globally using asynchronous background requests to find the fastest response times.
-- **Modern Interface**: A pure bash implementation that abandons the clunky `dialog` menus for a beautiful, colorful, responsive arrow-key navigated menu.
-- **Terminal Resize Support**: Automatically adapts layout and redraws instantly if your screen size changes vertically or horizontally.
-- **Zero Dependencies**: Requires no external TUI packages, relying entirely on Termux standards (`curl` and `awk`).
+## Features
+- **Ultra-Fast Benchmarking**: Tests all Termux mirrors globally using highly concurrent requests to find the fastest response times.
+- **Modern Interface**: A pure Go implementation that utilizes `pterm` for a beautiful, colorful, and responsive interactive terminal UI.
+- **Cool Animations**: Features smooth spinners, loading indicators, and progress bars.
+- **Universal Device Support**: Automatically detects your architecture (arm, aarch64, x86_64, i686) and downloads the optimized binary, ensuring it works on *all* devices running Termux.
+- **Zero Dependencies**: Distributed as a single compiled binary so you don't need to install Go or any other dependencies to use it.
 
-## Installation 🚀
+## Installation
 
-You can easily install this tool globally onto your device with a single command:
+You can easily install this tool globally onto your device with a single command. It will automatically detect your phone's CPU architecture and download the right file:
 
 ```bash
 bash <(curl -sL https://raw.githubusercontent.com/rugved-danej/termux-best-mirror/main/install.sh)
 ```
 
-**Alternatively, to install manually from a local clone:**
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-## Usage 💡
+## Usage
 
 Once installed, simply run the tool from anywhere in Termux by typing:
 
@@ -39,7 +39,7 @@ termux-best-mirror
 3. The script will test latency to all mirrors concurrently, showing a beautiful live progress bar.
 4. Select your preferred mirror from the resulting list (sorted fastest to slowest) to automatically link it and update `apt`.
 
-## Uninstallation 🗑️
+## Uninstallation
 
 To remove the command from Termux completely, run the following Termux command:
 

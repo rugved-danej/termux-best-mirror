@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [arm64, arm, 386, amd64]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+
+    - name: Build
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      run: |
+        OUTPUT_NAME=termux-best-mirror-${{ matrix.goos }}-${{ matrix.goarch }}
+        go build -ldflags="-s -w" -o $OUTPUT_NAME ./cmd/termux-best-mirror/...
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: termux-best-mirror-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: termux-best-mirror-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Move artifacts
+      run: |
+        mkdir -p release-binaries
+        find artifacts -type f -exec mv {} release-binaries/ \;
+
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: release-binaries/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
